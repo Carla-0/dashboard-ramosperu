@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: dashboard-ramosperu
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    envVars:
+      - key: DB_HOST
+        value: 34.125.156.253
+      - key: DB_PORT
+        value: "3306"
+      - key: DB_USER
+        value: mantenedor
+      - key: DB_PASSWORD
+        value: DDI!dev%2024
+      - key: DB_NAME
+        value: zeruk
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.11.6"
