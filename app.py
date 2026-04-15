@@ -357,7 +357,7 @@ def api_dashboard():
         COL_PRIMA = "c.RamosPeruPrimaNeta"
         COL_MC_ZYRA = "c.RamosPeMontoComisionZeruk"
         COL_MC_PROD = "c.RamosPeMontoComisionProd"
-        COL_FEE = f"(COALESCE({COL_MC_ZYRA}, 0) + COALESCE({COL_MC_PROD}, 0))"
+        COL_FEE = f"(COALESCE({COL_MC_ZYRA}, 0) - COALESCE({COL_MC_PROD}, 0))"
         COL_FECHA = "c.RamosPeruInicioVigencia"
 
         try:
