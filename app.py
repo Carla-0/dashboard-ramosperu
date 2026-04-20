@@ -1,6 +1,7 @@
 """
 Dashboard Ramos Peru - Zyra
 Panel de control y analisis financiero
+Usa tabla DashbordLk (datos pre-calculados en USD)
 """
 
 import os
@@ -31,15 +32,23 @@ DB_CONFIG = {
     'read_timeout': 30,
 }
 
-# ─── Nombres reales de tablas ───
-T_CAB = 'RamosPeru'
+# ─── Tabla principal ───
+T_DASH = 'DashbordLk'
 T_DET = 'RamosPeruCuota'
-T_ASEG = 'Aseguradora'
-T_RAMO = 'Ramo'
-T_PROD = 'Producer'
-T_EJEC = 'Ejecutivo'
-T_CLI = 'RamosPeruAsegurado'  # tabla de asegurados/clientes
-T_EMP = 'Empresa'
+T_CAB = 'RamosPeru'
+
+# ─── Columnas de DashbordLk ───
+COL_FEE = "d.DashbordLkFeeNetoUSD"
+COL_MC_ZYRA = "d.DashbordLkMCZyraUSD"
+COL_MC_PROD = "d.DashbordLkMCProducerUSD"
+COL_PRIMA = "d.DashbordLkPrimaNetaUSD"
+COL_FECHA = "d.DashbordLkInicioVigencia"
+COL_RAZON = "d.DashbordLkRazonSocial"
+COL_RAMO = "d.DashbordLkRamo"
+COL_PRODUCER = "d.DashbordLkProducer"
+COL_ASEG = "d.DashbordLkAseguradora"
+COL_EJEC = "d.DashbordLkEjecutivo"
+COL_ESTADO = "d.DashbordLkEstadoPago"
 
 
 class CustomEncoder(json.JSONEncoder):
@@ -63,104 +72,6 @@ def json_response(data, status=200):
     )
 
 
-# ─── Descubrir nombres de tablas de lookup ───
-_lookup_cache = {}
-
-
-def discover_lookups():
-    """Descubre las tablas de lookup y sus columnas de nombre."""
-    if _lookup_cache:
-        return _lookup_cache
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            # Ver que tablas existen
-            cur.execute("SHOW TABLES")
-            tables = [list(row.values())[0] for row in cur.fetchall()]
-
-            # Aseguradora
-            if T_ASEG in tables:
-                cur.execute(f"DESCRIBE `{T_ASEG}`")
-                cols = [r['Field'] for r in cur.fetchall()]
-                _lookup_cache['aseg_cols'] = cols
-                # Buscar columna de nombre
-                for c in cols:
-                    if 'nombre' in c.lower() or 'name' in c.lower() or 'descripcion' in c.lower():
-                        _lookup_cache['aseg_name'] = c
-                        break
-                # Buscar columna ID
-                for c in cols:
-                    if c.lower() == 'aseguradoraid' or c.lower() == 'id':
-                        _lookup_cache['aseg_id'] = c
-                        break
-
-            # Ramo
-            if T_RAMO in tables:
-                cur.execute(f"DESCRIBE `{T_RAMO}`")
-                cols = [r['Field'] for r in cur.fetchall()]
-                _lookup_cache['ramo_cols'] = cols
-                for c in cols:
-                    if 'nombre' in c.lower() or 'name' in c.lower() or 'descripcion' in c.lower():
-                        _lookup_cache['ramo_name'] = c
-                        break
-                for c in cols:
-                    if c.lower() in ('ramoid', 'ramosid', 'id'):
-                        _lookup_cache['ramo_id'] = c
-                        break
-
-            # Producer
-            if T_PROD in tables:
-                cur.execute(f"DESCRIBE `{T_PROD}`")
-                cols = [r['Field'] for r in cur.fetchall()]
-                _lookup_cache['prod_cols'] = cols
-                for c in cols:
-                    if 'nombre' in c.lower() or 'name' in c.lower():
-                        _lookup_cache['prod_name'] = c
-                        break
-                for c in cols:
-                    if c.lower() in ('producerid', 'id'):
-                        _lookup_cache['prod_id'] = c
-                        break
-
-            # Ejecutivo
-            if T_EJEC in tables:
-                cur.execute(f"DESCRIBE `{T_EJEC}`")
-                cols = [r['Field'] for r in cur.fetchall()]
-                _lookup_cache['ejec_cols'] = cols
-                for c in cols:
-                    if 'nombre' in c.lower() or 'name' in c.lower():
-                        _lookup_cache['ejec_name'] = c
-                        break
-                for c in cols:
-                    if c.lower() in ('ejecutivoid', 'id'):
-                        _lookup_cache['ejec_id'] = c
-                        break
-
-            # Cliente/Asegurado - buscar tabla que tenga razon social
-            for tbl in ['RamosPeruAsegurado', 'Cliente', 'EmpresaAsegurado', 'Empresa']:
-                if tbl in tables:
-                    cur.execute(f"DESCRIBE `{tbl}`")
-                    cols = [r['Field'] for r in cur.fetchall()]
-                    _lookup_cache['cli_table'] = tbl
-                    _lookup_cache['cli_cols'] = cols
-                    for c in cols:
-                        if 'razon' in c.lower() or 'nombre' in c.lower() or 'name' in c.lower():
-                            _lookup_cache['cli_name'] = c
-                            break
-                    for c in cols:
-                        if 'id' in c.lower():
-                            _lookup_cache['cli_id'] = c
-                            break
-                    if 'cli_name' in _lookup_cache:
-                        break
-
-    finally:
-        conn.close()
-
-    return _lookup_cache
-
-
 # ─── Rutas ───
 
 @app.route('/')
@@ -181,38 +92,18 @@ def api_test():
             tables = [list(row.values())[0] for row in cur.fetchall()]
             result['total_tables'] = len(tables)
 
-            # Cabecera
-            cur.execute(f"DESCRIBE `{T_CAB}`")
-            cab_cols = [r['Field'] for r in cur.fetchall()]
-            result['cabecera_columns'] = cab_cols
+            # DashbordLk
+            cur.execute(f"DESCRIBE `{T_DASH}`")
+            cols = [r['Field'] for r in cur.fetchall()]
+            result['dashbordlk_columns'] = cols
 
-            cur.execute(f"SELECT COUNT(*) AS total FROM `{T_CAB}`")
-            result['cabecera_count'] = cur.fetchone()['total']
+            cur.execute(f"SELECT COUNT(*) AS total FROM `{T_DASH}`")
+            result['dashbordlk_count'] = cur.fetchone()['total']
 
-            # Detalle
-            cur.execute(f"DESCRIBE `{T_DET}`")
-            det_cols = [r['Field'] for r in cur.fetchall()]
-            result['detalle_columns'] = det_cols
-
-            cur.execute(f"SELECT COUNT(*) AS total FROM `{T_DET}`")
-            result['detalle_count'] = cur.fetchone()['total']
-
-            # Muestra de datos
-            cur.execute(f"SELECT * FROM `{T_CAB}` LIMIT 1")
+            cur.execute(f"SELECT * FROM `{T_DASH}` LIMIT 1")
             sample = cur.fetchone()
             if sample:
                 result['sample_row'] = {k: str(v)[:100] for k, v in sample.items()}
-
-            # Lookups
-            lookups = discover_lookups()
-            result['lookups'] = {k: v for k, v in lookups.items() if not k.endswith('_cols')}
-
-            # Lookup tables detail
-            for prefix, table in [('aseg', T_ASEG), ('ramo', T_RAMO), ('prod', T_PROD), ('ejec', T_EJEC)]:
-                if table in tables:
-                    cur.execute(f"SELECT * FROM `{table}` LIMIT 2")
-                    rows = cur.fetchall()
-                    result[f'{prefix}_sample'] = [{k: str(v)[:80] for k, v in r.items()} for r in rows]
 
         conn.close()
 
@@ -253,51 +144,27 @@ def api_describe_table(table_name):
     return json_response(result)
 
 
-def build_base_query(lookups):
-    """Construye el FROM + JOINs base."""
-    joins = f"FROM `{T_CAB}` c"
-    joins += f"\n LEFT JOIN `{T_ASEG}` a ON c.AseguradoraID = a.AseguradoraID"
-    joins += f"\n LEFT JOIN `{T_RAMO}` r ON c.RamoId = r.RamoId"
-    joins += f"\n LEFT JOIN `{T_PROD}` p ON c.ProducerId = p.ProducerId"
-    joins += f"\n LEFT JOIN `{T_EJEC}` e ON c.EjecutivoId = e.EjecutivoId"
-    joins += f"\n LEFT JOIN `{T_EMP}` em ON c.RamosPeEmpresaId = em.EmpresaID"
-    return joins
-
-
-def get_name_expr(lookups, key):
-    """Devuelve la expresion SQL para obtener el nombre legible."""
-    if key == 'aseguradora':
-        return "a.AseguradoraNombre"
-    elif key == 'ramo':
-        return "r.RamoNombre"
-    elif key == 'producer':
-        return "CONCAT(COALESCE(p.ProducerPrimerNombre,''), ' ', COALESCE(p.ProducerApellidoPaterno,''))"
-    elif key == 'ejecutivo':
-        return "e.EjecutivoNombres"
-    elif key == 'razon_social':
-        return "COALESCE(em.EmpresaRazonSocial, c.RamosPeruBienAsegurado)"
-    elif key == 'estado_pago':
-        return "c.RamosPeruEstadoPago"
-    return "'N/A'"
-
-
 @app.route('/api/filters')
 def api_filters():
     try:
-        lookups = discover_lookups()
         conn = get_db()
         result = {}
-        base = build_base_query(lookups)
 
         try:
             with conn.cursor() as cur:
-                for key in ['producer', 'razon_social', 'aseguradora', 'ejecutivo', 'estado_pago']:
-                    expr = get_name_expr(lookups, key)
+                filters_map = {
+                    'producer': COL_PRODUCER,
+                    'razon_social': COL_RAZON,
+                    'aseguradora': COL_ASEG,
+                    'ejecutivo': COL_EJEC,
+                    'estado_pago': COL_ESTADO,
+                }
+                for key, col in filters_map.items():
                     try:
                         cur.execute(f"""
-                            SELECT DISTINCT {expr} AS val
-                            {base}
-                            WHERE {expr} IS NOT NULL AND {expr} != ''
+                            SELECT DISTINCT {col} AS val
+                            FROM `{T_DASH}` d
+                            WHERE {col} IS NOT NULL AND {col} != ''
                             ORDER BY val
                         """)
                         result[key] = [str(row['val']) for row in cur.fetchall()]
@@ -316,49 +183,39 @@ def api_filters():
 @app.route('/api/dashboard')
 def api_dashboard():
     try:
-        lookups = discover_lookups()
         conn = get_db()
-        base = build_base_query(lookups)
-
-        # Expresiones para nombres legibles
-        expr_razon = get_name_expr(lookups, 'razon_social')
-        expr_ramo = get_name_expr(lookups, 'ramo')
-        expr_producer = get_name_expr(lookups, 'producer')
-        expr_aseg = get_name_expr(lookups, 'aseguradora')
-        expr_ejec = get_name_expr(lookups, 'ejecutivo')
-        expr_estado = get_name_expr(lookups, 'estado_pago')
 
         # ─── Filtros ───
         conditions = []
         params = []
 
-        for key, expr in [('producer', expr_producer), ('razon_social', expr_razon),
-                          ('aseguradora', expr_aseg), ('ejecutivo', expr_ejec),
-                          ('estado_pago', expr_estado)]:
+        filters_map = {
+            'producer': COL_PRODUCER,
+            'razon_social': COL_RAZON,
+            'aseguradora': COL_ASEG,
+            'ejecutivo': COL_EJEC,
+            'estado_pago': COL_ESTADO,
+        }
+
+        for key, col in filters_map.items():
             val = request.args.get(key, '').strip()
             if val:
                 values = val.split('||')
                 placeholders = ','.join(['%s'] * len(values))
-                conditions.append(f"{expr} IN ({placeholders})")
+                conditions.append(f"{col} IN ({placeholders})")
                 params.extend(values)
 
         inicio_desde = request.args.get('inicio_desde', '').strip()
         inicio_hasta = request.args.get('inicio_hasta', '').strip()
         if inicio_desde:
-            conditions.append("c.RamosPeruInicioVigencia >= %s")
+            conditions.append(f"{COL_FECHA} >= %s")
             params.append(inicio_desde)
         if inicio_hasta:
-            conditions.append("c.RamosPeruInicioVigencia <= %s")
+            conditions.append(f"{COL_FECHA} <= %s")
             params.append(inicio_hasta)
 
         where = " AND ".join(conditions) if conditions else "1=1"
-
-        # Columnas de valores numericos
-        COL_PRIMA = "c.DashbordLkPrimaNetaUSD"
-        COL_MC_ZYRA = "c.DashbordLkMCZyraUSD"
-        COL_MC_PROD = "c.DashbordLkMCProducerUSD"
-        COL_FEE = "c.DashbordLkFeeNetoUSD"
-        COL_FECHA = "c.RamosPeruInicioVigencia"
+        base = f"FROM `{T_DASH}` d"
 
         try:
             with conn.cursor() as cur:
@@ -377,11 +234,11 @@ def api_dashboard():
 
                 # ─── Top Contratantes por Fee Neto ───
                 cur.execute(f"""
-                    SELECT COALESCE({expr_razon}, 'N/A') AS name,
+                    SELECT COALESCE({COL_RAZON}, 'N/A') AS name,
                            COALESCE(SUM({COL_FEE}), 0) AS value
                     {base}
                     WHERE {where}
-                    GROUP BY c.RamosPeEmpresaId, em.EmpresaRazonSocial, c.RamosPeruBienAsegurado
+                    GROUP BY {COL_RAZON}
                     ORDER BY value DESC
                     LIMIT 10
                 """, params)
@@ -389,11 +246,11 @@ def api_dashboard():
 
                 # ─── Top Contratantes por Comision Producer ───
                 cur.execute(f"""
-                    SELECT COALESCE({expr_razon}, 'N/A') AS name,
+                    SELECT COALESCE({COL_RAZON}, 'N/A') AS name,
                            COALESCE(SUM({COL_MC_PROD}), 0) AS value
                     {base}
                     WHERE {where}
-                    GROUP BY c.RamosPeEmpresaId, em.EmpresaRazonSocial, c.RamosPeruBienAsegurado
+                    GROUP BY {COL_RAZON}
                     ORDER BY value DESC
                     LIMIT 10
                 """, params)
@@ -401,11 +258,11 @@ def api_dashboard():
 
                 # ─── Top Ramos por Prima Neta ───
                 cur.execute(f"""
-                    SELECT COALESCE({expr_ramo}, 'N/A') AS name,
+                    SELECT COALESCE({COL_RAMO}, 'N/A') AS name,
                            COALESCE(SUM({COL_PRIMA}), 0) AS value
                     {base}
                     WHERE {where}
-                    GROUP BY c.RamoId, r.RamoNombre
+                    GROUP BY {COL_RAMO}
                     ORDER BY value DESC
                     LIMIT 10
                 """, params)
@@ -413,11 +270,11 @@ def api_dashboard():
 
                 # ─── Top Ramos por Comision Zyra ───
                 cur.execute(f"""
-                    SELECT COALESCE({expr_ramo}, 'N/A') AS name,
+                    SELECT COALESCE({COL_RAMO}, 'N/A') AS name,
                            COALESCE(SUM({COL_MC_ZYRA}), 0) AS value
                     {base}
                     WHERE {where}
-                    GROUP BY c.RamoId, r.RamoNombre
+                    GROUP BY {COL_RAMO}
                     ORDER BY value DESC
                     LIMIT 10
                 """, params)
@@ -425,27 +282,27 @@ def api_dashboard():
 
                 # ─── Estado de Pago ───
                 cur.execute(f"""
-                    SELECT COALESCE({expr_estado}, 'N/A') AS estado,
+                    SELECT COALESCE({COL_ESTADO}, 'N/A') AS estado,
                            COUNT(*) AS count,
                            COALESCE(SUM({COL_PRIMA}), 0) AS prima_neta,
                            COALESCE(SUM({COL_FEE}), 0) AS fee_neto
                     {base}
                     WHERE {where}
-                    GROUP BY c.RamosPeruEstadoPago
+                    GROUP BY {COL_ESTADO}
                     ORDER BY prima_neta DESC
                 """, params)
                 estado_pago = [dict(r) for r in cur.fetchall()]
 
                 # ─── Top Producers ───
                 cur.execute(f"""
-                    SELECT COALESCE({expr_producer}, 'N/A') AS producer,
+                    SELECT COALESCE({COL_PRODUCER}, 'N/A') AS producer,
                            COALESCE(SUM({COL_FEE}), 0) AS fee_neto,
                            COALESCE(SUM({COL_MC_PROD}), 0) AS mc_producer,
                            COALESCE(SUM({COL_PRIMA}), 0) AS prima_neta,
                            COUNT(*) AS count
                     {base}
                     WHERE {where}
-                    GROUP BY c.ProducerId
+                    GROUP BY {COL_PRODUCER}
                     ORDER BY fee_neto DESC
                     LIMIT 10
                 """, params)
@@ -471,28 +328,14 @@ def api_dashboard():
                     cur.execute(f"""
                         SELECT
                             COUNT(*) AS total_cuotas,
-                            COALESCE(SUM(d.RamoPeMonto), 0) AS monto_total,
-                            SUM(CASE WHEN d.RamoPeEstadoPago LIKE '%%Pagad%%' THEN 1 ELSE 0 END) AS cuotas_pagadas,
-                            SUM(CASE WHEN d.RamoPeEstadoPago LIKE '%%Pagad%%' THEN d.RamoPeMonto ELSE 0 END) AS monto_pagado
-                        FROM `{T_DET}` d
-                        INNER JOIN `{T_CAB}` c ON d.RamosPeruId = c.RamosPeruId
-                        WHERE {where.replace(expr_producer, "'" + "N/A" + "'").replace(expr_razon, "COALESCE(c.RamosPeruBienAsegurado, '')").replace(expr_ramo, "c.RamoId").replace(expr_aseg, "c.AseguradoraID").replace(expr_ejec, "c.EjecutivoId") if 'LEFT JOIN' in build_base_query(lookups) else where}
-                    """, params if not conditions else [])
+                            COALESCE(SUM(q.RamoPeMonto), 0) AS monto_total,
+                            SUM(CASE WHEN q.RamoPeEstadoPago LIKE '%%Pagad%%' THEN 1 ELSE 0 END) AS cuotas_pagadas,
+                            SUM(CASE WHEN q.RamoPeEstadoPago LIKE '%%Pagad%%' THEN q.RamoPeMonto ELSE 0 END) AS monto_pagado
+                        FROM `{T_DET}` q
+                    """)
                     cuotas_summary = cur.fetchone() or {}
-                except Exception as e:
-                    # Si falla el query de cuotas con filtros, intentar sin filtros
-                    try:
-                        cur.execute(f"""
-                            SELECT
-                                COUNT(*) AS total_cuotas,
-                                COALESCE(SUM(d.RamoPeMonto), 0) AS monto_total,
-                                SUM(CASE WHEN d.RamoPeEstadoPago LIKE '%%Pagad%%' THEN 1 ELSE 0 END) AS cuotas_pagadas,
-                                SUM(CASE WHEN d.RamoPeEstadoPago LIKE '%%Pagad%%' THEN d.RamoPeMonto ELSE 0 END) AS monto_pagado
-                            FROM `{T_DET}` d
-                        """)
-                        cuotas_summary = cur.fetchone() or {}
-                    except:
-                        cuotas_summary = {}
+                except:
+                    cuotas_summary = {}
 
                 # Total records
                 cur.execute(f"SELECT COUNT(*) AS total {base} WHERE {where}", params)
