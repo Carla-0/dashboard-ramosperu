@@ -48,7 +48,8 @@ COL_RAMO = "d.DashbordLkRamo"
 COL_PRODUCER = "d.DashbordLkProducer"
 COL_ASEG = "d.DashbordLkAseguradora"
 COL_EJEC = "d.DashbordLkEjecutivo"
-COL_ESTADO = "d.DashbordLkEstadoPago"
+COL_ESTADO_DASH = "d.DashbordLkEstadoPago"
+# Estado de pago viene de RamosPeruCuota (vinculado via DashbordLkProductoId = RamosPeruId)
 
 
 class CustomEncoder(json.JSONEncoder):
@@ -157,7 +158,6 @@ def api_filters():
                     'razon_social': COL_RAZON,
                     'aseguradora': COL_ASEG,
                     'ejecutivo': COL_EJEC,
-                    'estado_pago': COL_ESTADO,
                 }
                 for key, col in filters_map.items():
                     try:
@@ -171,6 +171,19 @@ def api_filters():
                     except Exception as e:
                         result[key] = []
                         result[f'{key}_error'] = str(e)
+
+                # Estado de pago desde RamosPeruCuota
+                try:
+                    cur.execute(f"""
+                        SELECT DISTINCT q.RamoPeEstadoPago AS val
+                        FROM `{T_DET}` q
+                        WHERE q.RamoPeEstadoPago IS NOT NULL AND q.RamoPeEstadoPago != ''
+                        ORDER BY val
+                    """)
+                    result['estado_pago'] = [str(row['val']) for row in cur.fetchall()]
+                except Exception as e:
+                    result['estado_pago'] = []
+                    result['estado_pago_error'] = str(e)
         finally:
             conn.close()
 
@@ -194,7 +207,6 @@ def api_dashboard():
             'razon_social': COL_RAZON,
             'aseguradora': COL_ASEG,
             'ejecutivo': COL_EJEC,
-            'estado_pago': COL_ESTADO,
         }
 
         for key, col in filters_map.items():
@@ -204,6 +216,14 @@ def api_dashboard():
                 placeholders = ','.join(['%s'] * len(values))
                 conditions.append(f"{col} IN ({placeholders})")
                 params.extend(values)
+
+        # Filtro de estado de pago desde RamosPeruCuota (usando EXISTS para no multiplicar filas)
+        estado_pago_filter = request.args.get('estado_pago', '').strip()
+        if estado_pago_filter:
+            ep_values = estado_pago_filter.split('||')
+            ep_placeholders = ','.join(['%s'] * len(ep_values))
+            conditions.append(f"EXISTS (SELECT 1 FROM `{T_DET}` q WHERE q.RamosPeruId = d.DashbordLkProductoId AND q.RamoPeEstadoPago IN ({ep_placeholders}))")
+            params.extend(ep_values)
 
         inicio_desde = request.args.get('inicio_desde', '').strip()
         inicio_hasta = request.args.get('inicio_hasta', '').strip()
@@ -280,15 +300,16 @@ def api_dashboard():
                 """, params)
                 top_ramos_mc_zyra = [dict(r) for r in cur.fetchall()]
 
-                # ─── Estado de Pago ───
+                # ─── Estado de Pago (desde RamosPeruCuota) ───
                 cur.execute(f"""
-                    SELECT COALESCE({COL_ESTADO}, 'N/A') AS estado,
-                           COUNT(*) AS count,
-                           COALESCE(SUM({COL_PRIMA}), 0) AS prima_neta,
-                           COALESCE(SUM({COL_FEE}), 0) AS fee_neto
-                    {base}
+                    SELECT COALESCE(q.RamoPeEstadoPago, 'N/A') AS estado,
+                           COUNT(DISTINCT d.DashbordLkId) AS count,
+                           COALESCE(SUM(DISTINCT {COL_PRIMA}), 0) AS prima_neta,
+                           COALESCE(SUM(DISTINCT {COL_FEE}), 0) AS fee_neto
+                    FROM `{T_DASH}` d
+                    LEFT JOIN `{T_DET}` q ON q.RamosPeruId = d.DashbordLkProductoId
                     WHERE {where}
-                    GROUP BY {COL_ESTADO}
+                    GROUP BY q.RamoPeEstadoPago
                     ORDER BY prima_neta DESC
                 """, params)
                 estado_pago = [dict(r) for r in cur.fetchall()]
@@ -325,6 +346,13 @@ def api_dashboard():
                 # ─── Cuotas (RamosPeruCuota) ───
                 cuotas_summary = {}
                 try:
+                    cuota_conditions = []
+                    cuota_params = []
+                    # Aplicar filtros de DashbordLk via subquery
+                    if conditions:
+                        cuota_conditions.append(f"q.RamosPeruId IN (SELECT d.DashbordLkProductoId FROM `{T_DASH}` d WHERE {where})")
+                        cuota_params = list(params)
+                    cuota_where = " AND ".join(cuota_conditions) if cuota_conditions else "1=1"
                     cur.execute(f"""
                         SELECT
                             COUNT(*) AS total_cuotas,
@@ -332,7 +360,8 @@ def api_dashboard():
                             SUM(CASE WHEN q.RamoPeEstadoPago LIKE '%%Pagad%%' THEN 1 ELSE 0 END) AS cuotas_pagadas,
                             SUM(CASE WHEN q.RamoPeEstadoPago LIKE '%%Pagad%%' THEN q.RamoPeMonto ELSE 0 END) AS monto_pagado
                         FROM `{T_DET}` q
-                    """)
+                        WHERE {cuota_where}
+                    """, cuota_params)
                     cuotas_summary = cur.fetchone() or {}
                 except:
                     cuotas_summary = {}
