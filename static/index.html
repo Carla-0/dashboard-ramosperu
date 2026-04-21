@@ -513,6 +513,30 @@
                 </div>
             </div>
         </div>
+
+        <!-- Client Table -->
+        <div class="chart-card chart-card-full" style="margin-top:24px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+                <div class="chart-title" style="margin:0;"><span class="icon">&#128196;</span> Detalle por Cliente</div>
+                <input type="text" id="clientSearch" placeholder="Buscar cliente..." style="padding:8px 14px;border:1px solid var(--border);border-radius:8px;font-size:13px;width:260px;outline:none;">
+            </div>
+            <div style="overflow-x:auto;">
+                <table id="clientTable" style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead>
+                        <tr style="border-bottom:2px solid var(--border);text-align:left;">
+                            <th style="padding:10px 12px;cursor:pointer;white-space:nowrap;" data-sort="razon_social">Raz&oacute;n Social <span class="sort-icon">&#8597;</span></th>
+                            <th style="padding:10px 12px;cursor:pointer;text-align:right;white-space:nowrap;" data-sort="fee_neto">Fee Neto USD <span class="sort-icon">&#8597;</span></th>
+                            <th style="padding:10px 12px;cursor:pointer;text-align:right;white-space:nowrap;" data-sort="mc_producer">Comisi&oacute;n Producer USD <span class="sort-icon">&#8597;</span></th>
+                            <th style="padding:10px 12px;cursor:pointer;text-align:right;white-space:nowrap;" data-sort="mc_zyra">Comisi&oacute;n Zyra USD <span class="sort-icon">&#8597;</span></th>
+                            <th style="padding:10px 12px;cursor:pointer;text-align:right;white-space:nowrap;" data-sort="prima_neta">Prima Neta USD <span class="sort-icon">&#8597;</span></th>
+                            <th style="padding:10px 12px;cursor:pointer;text-align:right;white-space:nowrap;" data-sort="polizas">P&oacute;lizas <span class="sort-icon">&#8597;</span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="clientTableBody"></tbody>
+                </table>
+            </div>
+            <div id="clientPagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-size:13px;color:var(--text-secondary);"></div>
+        </div>
     </div>
 
     <script>
@@ -907,6 +931,121 @@
                 if (svgEl) { svgEl.style.height = '80px'; svgEl.style.width = 'auto'; }
             }
         });
+
+        // ─── Client Table ───
+        let clientSort = 'fee_neto';
+        let clientDir = 'desc';
+        let clientPage = 1;
+        let clientSearchTerm = '';
+
+        function getFilterParams() {
+            const p = new URLSearchParams();
+            // Reuse same filter logic
+            const desde = document.getElementById('filterDesde').value;
+            const hasta = document.getElementById('filterHasta').value;
+            if (desde) p.set('inicio_desde', desde);
+            if (hasta) p.set('inicio_hasta', hasta);
+            document.querySelectorAll('.multi-select').forEach(ms => {
+                const key = ms.dataset.key;
+                const selected = Array.from(ms.querySelectorAll('.ms-option.selected')).map(o => o.dataset.value);
+                if (selected.length > 0) p.set(key, selected.join('||'));
+            });
+            return p;
+        }
+
+        async function loadClientTable() {
+            const p = getFilterParams();
+            p.set('page', clientPage);
+            p.set('per_page', 20);
+            p.set('sort', clientSort);
+            p.set('dir', clientDir);
+            if (clientSearchTerm) p.set('search', clientSearchTerm);
+
+            try {
+                const resp = await fetch('/api/clients?' + p.toString());
+                const data = await resp.json();
+                if (data.error) { console.error(data.error); return; }
+
+                const tbody = document.getElementById('clientTableBody');
+                if (!data.rows || data.rows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-secondary);">No se encontraron clientes</td></tr>';
+                } else {
+                    tbody.innerHTML = data.rows.map((r, i) => `
+                        <tr style="border-bottom:1px solid var(--border);${i % 2 === 0 ? '' : 'background:#f8fafc;'}">
+                            <td style="padding:10px 12px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.razon_social}">${r.razon_social}</td>
+                            <td style="padding:10px 12px;text-align:right;font-weight:600;color:var(--primary);">${fmt(r.fee_neto)}</td>
+                            <td style="padding:10px 12px;text-align:right;">${fmt(r.mc_producer)}</td>
+                            <td style="padding:10px 12px;text-align:right;">${fmt(r.mc_zyra)}</td>
+                            <td style="padding:10px 12px;text-align:right;">${fmt(r.prima_neta)}</td>
+                            <td style="padding:10px 12px;text-align:right;">${r.polizas}</td>
+                        </tr>
+                    `).join('');
+                }
+
+                // Pagination
+                const pag = document.getElementById('clientPagination');
+                const totalPages = data.total_pages || 1;
+                pag.innerHTML = `
+                    <span>Mostrando ${data.rows.length} de ${data.total} clientes</span>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <button onclick="changeClientPage(${clientPage - 1})" ${clientPage <= 1 ? 'disabled' : ''} style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:white;cursor:pointer;font-size:12px;">&laquo; Anterior</button>
+                        <span style="padding:0 8px;">P&aacute;gina ${clientPage} de ${totalPages}</span>
+                        <button onclick="changeClientPage(${clientPage + 1})" ${clientPage >= totalPages ? 'disabled' : ''} style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:white;cursor:pointer;font-size:12px;">Siguiente &raquo;</button>
+                    </div>
+                `;
+
+                // Update sort icons
+                document.querySelectorAll('#clientTable th[data-sort]').forEach(th => {
+                    const icon = th.querySelector('.sort-icon');
+                    if (th.dataset.sort === clientSort) {
+                        icon.textContent = clientDir === 'asc' ? '\u25B2' : '\u25BC';
+                    } else {
+                        icon.textContent = '\u2195';
+                    }
+                });
+            } catch (e) {
+                console.error('Error loading client table:', e);
+            }
+        }
+
+        function changeClientPage(p) {
+            if (p < 1) return;
+            clientPage = p;
+            loadClientTable();
+        }
+
+        // Sort by clicking headers
+        document.querySelectorAll('#clientTable th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const col = th.dataset.sort;
+                if (clientSort === col) {
+                    clientDir = clientDir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    clientSort = col;
+                    clientDir = col === 'razon_social' ? 'asc' : 'desc';
+                }
+                clientPage = 1;
+                loadClientTable();
+            });
+        });
+
+        // Search with debounce
+        let clientSearchTimer;
+        document.getElementById('clientSearch').addEventListener('input', (e) => {
+            clearTimeout(clientSearchTimer);
+            clientSearchTimer = setTimeout(() => {
+                clientSearchTerm = e.target.value;
+                clientPage = 1;
+                loadClientTable();
+            }, 400);
+        });
+
+        // Hook into loadData to also refresh client table
+        const origLoadData = loadData;
+        loadData = async function() {
+            await origLoadData();
+            loadClientTable();
+        };
 
         // Date filter events
         document.getElementById('filterDesde').addEventListener('change', debounceLoadData);

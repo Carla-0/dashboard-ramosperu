@@ -395,6 +395,121 @@ def api_dashboard():
         }, 500)
 
 
+@app.route('/api/clients')
+def api_clients():
+    """Tabla detallada de clientes con totales agrupados por razon social."""
+    try:
+        conn = get_db()
+
+        # ─── Filtros (misma logica que dashboard) ───
+        conditions = []
+        params = []
+
+        filters_map = {
+            'producer': COL_PRODUCER,
+            'razon_social': COL_RAZON,
+            'aseguradora': COL_ASEG,
+            'ejecutivo': COL_EJEC,
+        }
+
+        for key, col in filters_map.items():
+            val = request.args.get(key, '').strip()
+            if val:
+                values = val.split('||')
+                placeholders = ','.join(['%s'] * len(values))
+                conditions.append(f"{col} IN ({placeholders})")
+                params.extend(values)
+
+        estado_pago_filter = request.args.get('estado_pago', '').strip()
+        if estado_pago_filter:
+            ep_values = estado_pago_filter.split('||')
+            ep_placeholders = ','.join(['%s'] * len(ep_values))
+            conditions.append(f"EXISTS (SELECT 1 FROM `{T_DET}` q WHERE q.RamosPeruId = d.DashbordLkProductoId AND q.RamoPeEstadoPago IN ({ep_placeholders}))")
+            params.extend(ep_values)
+
+        inicio_desde = request.args.get('inicio_desde', '').strip()
+        inicio_hasta = request.args.get('inicio_hasta', '').strip()
+        if inicio_desde:
+            conditions.append(f"{COL_FECHA} >= %s")
+            params.append(inicio_desde)
+        if inicio_hasta:
+            conditions.append(f"{COL_FECHA} <= %s")
+            params.append(inicio_hasta)
+
+        where = " AND ".join(conditions) if conditions else "1=1"
+
+        # Paginacion
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        offset = (page - 1) * per_page
+
+        # Ordenamiento
+        sort_col = request.args.get('sort', 'fee_neto')
+        sort_dir = request.args.get('dir', 'desc').upper()
+        if sort_dir not in ('ASC', 'DESC'):
+            sort_dir = 'DESC'
+        sort_map = {
+            'razon_social': COL_RAZON,
+            'fee_neto': f"COALESCE(SUM({COL_FEE}), 0)",
+            'mc_producer': f"COALESCE(SUM({COL_MC_PROD}), 0)",
+            'mc_zyra': f"COALESCE(SUM({COL_MC_ZYRA}), 0)",
+            'prima_neta': f"COALESCE(SUM({COL_PRIMA}), 0)",
+            'polizas': "COUNT(*)",
+        }
+        order_expr = sort_map.get(sort_col, f"COALESCE(SUM({COL_FEE}), 0)")
+
+        # Busqueda
+        search = request.args.get('search', '').strip()
+        if search:
+            conditions.append(f"{COL_RAZON} LIKE %s")
+            params.append(f"%{search}%")
+            where = " AND ".join(conditions)
+
+        try:
+            with conn.cursor() as cur:
+                # Total de clientes unicos (para paginacion)
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT {COL_RAZON}) AS total
+                    FROM `{T_DASH}` d
+                    WHERE {where}
+                """, params)
+                total = cur.fetchone()['total']
+
+                # Datos agrupados por razon social
+                cur.execute(f"""
+                    SELECT
+                        COALESCE({COL_RAZON}, 'N/A') AS razon_social,
+                        COALESCE(SUM({COL_FEE}), 0) AS fee_neto,
+                        COALESCE(SUM({COL_MC_PROD}), 0) AS mc_producer,
+                        COALESCE(SUM({COL_MC_ZYRA}), 0) AS mc_zyra,
+                        COALESCE(SUM({COL_PRIMA}), 0) AS prima_neta,
+                        COUNT(*) AS polizas
+                    FROM `{T_DASH}` d
+                    WHERE {where}
+                    GROUP BY {COL_RAZON}
+                    ORDER BY {order_expr} {sort_dir}
+                    LIMIT %s OFFSET %s
+                """, params + [per_page, offset])
+                rows = [dict(r) for r in cur.fetchall()]
+
+        finally:
+            conn.close()
+
+        return json_response({
+            'rows': rows,
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total + per_page - 1) // per_page
+        })
+
+    except Exception as e:
+        return json_response({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }, 500)
+
+
 @app.route('/api/logo')
 def api_logo():
     try:
