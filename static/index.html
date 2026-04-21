@@ -444,12 +444,6 @@
             </div>
         </div>
 
-        <!-- Cuotas Summary (from ramosperucuotas) -->
-        <div class="chart-card chart-card-full" id="cuotasSection" style="margin-bottom:24px; display:none;">
-            <div class="chart-title"><span class="icon">&#128179;</span> Resumen de Cuotas (ramosperucuotas)</div>
-            <div class="cuotas-grid" id="cuotasGrid"></div>
-        </div>
-
         <!-- Charts Row 1: Top Contratantes -->
         <div class="charts-grid">
             <div class="chart-card">
@@ -753,38 +747,6 @@
             document.getElementById('lastUpdate').textContent = 'Actualizado: ' + timeStr;
 
             // Cuotas summary
-            const cs = data.cuotas_summary || {};
-            const cuotasSection = document.getElementById('cuotasSection');
-            const cuotasGrid = document.getElementById('cuotasGrid');
-            if (cs.total_cuotas) {
-                cuotasSection.style.display = 'block';
-                let html = `
-                    <div class="cuota-item">
-                        <div class="label">Total Cuotas</div>
-                        <div class="value">${(cs.total_cuotas || 0).toLocaleString()}</div>
-                    </div>
-                    <div class="cuota-item">
-                        <div class="label">Monto Total Cuotas</div>
-                        <div class="value">${fmt(cs.monto_total)}</div>
-                    </div>
-                `;
-                if (cs.cuotas_pagadas !== undefined) {
-                    html += `
-                        <div class="cuota-item">
-                            <div class="label">Cuotas Pagadas</div>
-                            <div class="value" style="color:var(--success)">${(cs.cuotas_pagadas || 0).toLocaleString()}</div>
-                        </div>
-                        <div class="cuota-item">
-                            <div class="label">Monto Pagado</div>
-                            <div class="value" style="color:var(--success)">${fmt(cs.monto_pagado)}</div>
-                        </div>
-                    `;
-                }
-                cuotasGrid.innerHTML = html;
-            } else {
-                cuotasSection.style.display = 'none';
-            }
-
             destroyCharts();
 
             // Helper for horizontal bar chart
